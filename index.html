@@ -482,9 +482,9 @@ var Core = (function(){
     { key:'af',  short:'AF #15', label:'Amazing Fantasy (1962)', search:'Amazing Fantasy', year:1962, only:['15'],
       map:[{from:15,to:15,legacy:0}] },
     { key:'v1',  short:'Vol. 1', label:'ASM (1963) · vol. 1', search:'The Amazing Spider-Man', year:1963,
-      map:[{from:1,to:441,offset:0}] },
+      map:[{from:1,to:441,offset:0},{from:500,to:700,offset:0,alt:true},{from:789,to:801,offset:0,alt:true},{from:1000,to:99999,offset:0,alt:true}] },
     { key:'v2',  short:'Vol. 2', label:'ASM (1999) · vol. 2 et #500–700', search:'The Amazing Spider-Man', year:1999,
-      map:[{from:1,to:58,offset:441},{from:500,to:700,offset:0}] },
+      map:[{from:1,to:58,offset:441},{from:500,to:700,offset:0},{from:789,to:801,offset:0,alt:true},{from:1000,to:99999,offset:0,alt:true}] },
     { key:'ssm', short:'Superior', label:'Superior Spider-Man (2013)', search:'The Superior Spider-Man', year:2013,
       map:[{from:1,to:33,offset:700}] },
     { key:'v3',  short:'Vol. 3', label:'ASM (2014) · vol. 3', search:'The Amazing Spider-Man', year:2014,
@@ -492,7 +492,7 @@ var Core = (function(){
     { key:'ryv', short:'Renew Your Vows', label:'ASM: Renew Your Vows (2015)', search:'Renew Your Vows', year:2015,
       map:[{from:1,to:5,offset:751}] },
     { key:'v4',  short:'Vol. 4', label:'ASM (2015) · vol. 4 et #789–801', search:'The Amazing Spider-Man', year:2015,
-      map:[{from:1,to:32,offset:756},{from:789,to:801,offset:0}] },
+      map:[{from:1,to:32,offset:756},{from:789,to:801,offset:0},{from:1000,to:99999,offset:0,alt:true}] },
     { key:'v5',  short:'Vol. 5', label:'ASM (2018) · vol. 5', search:'The Amazing Spider-Man', year:2018,
       map:[{from:1,to:93,offset:801}] },
     { key:'v6',  short:'Vol. 6', label:'ASM (2022) · vol. 6', search:'The Amazing Spider-Man', year:2022,
@@ -589,9 +589,15 @@ var Core = (function(){
     ['special','Spider-Island','','2012','666-673','+ tie-ins',1,'']
   ];
 
+  var PRESET_VERSION = 2;
+  // Met à jour la numérotation des volumes ASM d'une collection créée avec une version plus ancienne
+  function upgradeASMSlots(slots){
+    var ref = {}; ASM_SLOTS.forEach(function(s){ ref[s.key]=s; });
+    return (slots||[]).map(function(s){ return ref[s.key] ? Object.assign({}, s, { map: JSON.parse(JSON.stringify(ref[s.key].map)) }) : s; });
+  }
   function presetASM(){
     return {
-      name:'The Amazing Spider-Man', icon:'🕷️', preset:'asm',
+      name:'The Amazing Spider-Man', icon:'🕷️', preset:'asm', presetVersion:PRESET_VERSION,
       slots: JSON.parse(JSON.stringify(ASM_SLOTS)),
       columns: defaultColumns(),
       arcs: ASM_ERAS.map(function(e,i){ return { id:'era'+i, kind:'ere', name:e[0], s:e[1], e:e[2], y:e[3], sub:e[4], color:'#9aa6cc' }; }),
@@ -632,7 +638,7 @@ var Core = (function(){
       var r = map[i];
       if(p.int>=r.from && p.int<=r.to){
         var L = r.legacy!=null ? r.legacy : p.int + (+r.offset||0);
-        return p.whole ? { legacy:L, parent:L } : { legacy:null, parent:L };
+        return p.whole ? { legacy:L, parent:L, alt:!!r.alt } : { legacy:null, parent:L, alt:!!r.alt };
       }
     }
     return { legacy:null, parent:null };
@@ -681,7 +687,7 @@ var Core = (function(){
         var L = legacyFor(slot, it.n);
         if(L.legacy!=null && L.legacy>maxLegacy) maxLegacy=L.legacy;
         return { key:issueKey(slot.key,it.n), slot:slot.key, n:String(it.n), t:it.t||'', cd:it.cd||'', sd:it.sd||'',
-                 img:it.img||'', id:it.id||null, url:it.url||'', legacy:L.legacy, parent:L.parent };
+                 img:it.img||'', id:it.id||null, url:it.url||'', legacy:L.legacy, parent:L.parent, alt:!!L.alt };
       });
       items.sort(function(a,b){
         var pa=parseNum(a.n), pb=parseNum(b.n);
@@ -698,6 +704,19 @@ var Core = (function(){
         it.slotOrder = order;
         out.push(it);
       });
+    });
+    // Un même numéro legacy peut exister dans deux volumes Comic Vine (ex. #500–700 rangés dans le volume de 1963) :
+    // on garde l'exemplaire du volume « principal » (plage non alternative), sinon le premier trouvé.
+    var best = {};
+    out.forEach(function(it){
+      if(it.legacy==null) return;
+      var cur = best[it.legacy];
+      if(!cur || (cur.alt && !it.alt)) best[it.legacy] = it;
+    });
+    out = out.filter(function(it){
+      if(it.legacy!=null) return best[it.legacy]===it;
+      if(it.alt && it.parent!=null){ var b = best[it.parent]; return !b || b.slot===it.slot; }
+      return true;
     });
     (tieins||[]).forEach(function(t){
       (t.items||[]).forEach(function(x, i){
@@ -780,7 +799,7 @@ var Core = (function(){
 
   function csvCell(v){ v = String(v==null?'':v); return /[;"\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; }
 
-  return { ASM_SLOTS:ASM_SLOTS, presetASM:presetASM, presetEmpty:presetEmpty, defaultColumns:defaultColumns,
+  return { ASM_SLOTS:ASM_SLOTS, PRESET_VERSION:PRESET_VERSION, upgradeASMSlots:upgradeASMSlots, presetASM:presetASM, presetEmpty:presetEmpty, defaultColumns:defaultColumns,
     expectedCount:expectedCount, legacyRangeLabel:legacyRangeLabel, parseNum:parseNum, legacyFor:legacyFor,
     issueKey:issueKey, sanitizeKey:sanitizeKey, normName:normName, pickVolume:pickVolume, buildCatalog:buildCatalog,
     parseRanges:parseRanges, rangesToText:rangesToText, inRanges:inRanges, rangesMin:rangesMin, editionCovers:editionCovers,
@@ -968,6 +987,12 @@ function subscribeUser() {
   S.unsubUser.push(onSnapshot(collection(db, 'users', S.user.uid, 'collections'), snap => {
     S.colls = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || (a.createdAt || 0) - (b.createdAt || 0));
     S.collsLoaded = !snap.metadata.fromCache || S.colls.length > 0;
+    S.colls.forEach(c => {
+      if (c.preset === 'asm' && (c.presetVersion || 1) < Core.PRESET_VERSION && !S['_upg' + c.id]) {
+        S['_upg' + c.id] = true;
+        setDoc(doc(db, 'users', S.user.uid, 'collections', c.id), { slots: Core.upgradeASMSlots(c.slots), presetVersion: Core.PRESET_VERSION }, { merge: true }).catch(saveErr);
+      }
+    });
     const cur = S.colls.find(c => c.id === S.cid);
     if (cur) { S.coll = cur; renderCollHeader(); rebuild(); }
     pickCollection();
@@ -1018,7 +1043,7 @@ function switchTo(cid) {
 async function createCollection(p) {
   const id = 'c' + uid8();
   const base = doc(db, 'users', S.user.uid, 'collections', id);
-  await setDoc(base, { name: p.name, icon: p.icon, preset: p.preset || null, slots: p.slots, columns: p.columns, createdAt: Date.now(), order: S.colls.length });
+  await setDoc(base, { name: p.name, icon: p.icon, preset: p.preset || null, presetVersion: p.presetVersion || null, slots: p.slots, columns: p.columns, createdAt: Date.now(), order: S.colls.length });
   await setDoc(doc(db, 'users', S.user.uid, 'collections', id, 'meta', 'vf'), { editions: p.editions || [] });
   await setDoc(doc(db, 'users', S.user.uid, 'collections', id, 'meta', 'extra'), { arcs: p.arcs || [], notes: {} });
   await setDoc(uRef('meta', 'settings'), { activeColl: id }, { merge: true });
