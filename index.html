@@ -612,10 +612,10 @@ var Core = (function(){
   }
 
   function expectedCount(slot){
-    var n=0; (slot.map||[]).forEach(function(r){ if(r.to<10000) n += r.to-r.from+1; }); return n;
+    var n=0; (slot.map||[]).forEach(function(r){ if(r.to<10000 && !r.alt) n += r.to-r.from+1; }); return n;
   }
   function legacyRangeLabel(slot){
-    return (slot.map||[]).map(function(r){
+    return (slot.map||[]).filter(function(r){ return !r.alt; }).map(function(r){
       var a = r.legacy!=null ? r.legacy : r.from + r.offset;
       var b = r.legacy!=null ? r.legacy : r.to + r.offset;
       if (r.to>=10000) return '#'+a+'+';
@@ -718,6 +718,15 @@ var Core = (function(){
       if(it.alt && it.parent!=null){ var b = best[it.parent]; return !b || b.slot===it.slot; }
       return true;
     });
+    // Volume « d'affichage » : un numéro rangé par Comic Vine dans un autre volume rejoint le volume qui possède sa plage
+    var owner = function(L){
+      for(var i=0;i<(slots||[]).length;i++){ var m=slots[i].map||[];
+        for(var j=0;j<m.length;j++){ var r=m[j]; if(r.alt) continue;
+          var a = r.legacy!=null ? r.legacy : r.from + (+r.offset||0), b = r.legacy!=null ? r.legacy : r.to + (+r.offset||0);
+          if(L>=a && L<=b) return slots[i].key; } }
+      return null;
+    };
+    out.forEach(function(it){ var L = it.legacy!=null ? it.legacy : it.parent; it.sec = (it.alt && L!=null && owner(L)) || it.slot; });
     (tieins||[]).forEach(function(t){
       (t.items||[]).forEach(function(x, i){
         out.push({ key:'t'+t.id+'_'+x.k, slot:null, tiein:t.id, tieinLabel:t.label, tieinColor:t.color||'#9b5de5',
@@ -886,15 +895,15 @@ function numLabel(it) {
     const m = String(it.n || '').match(/^(.*?)\s*(#\S+)$/);
     return m ? { main: m[2], sub: m[1] || it.tieinLabel } : { main: it.n || '?', sub: it.tieinLabel };
   }
-  const slot = slotOf(it.slot) || { short: '?' };
+  const slot = slotOf(it.sec || it.slot) || { short: '?' };
   if (S.coll?.preset === 'asm' && it.slot === 'af') return { main: '#' + it.legacy, sub: 'Amazing Fantasy #15' };
   if (it.legacy != null) return { main: '#' + it.legacy, sub: it.legacy == it.n ? slot.short : `${slot.short} #${it.n}` };
   return { main: `#${it.n}`, sub: `${slot.short} · hors legacy` };
 }
 function fullName(it) {
   if (it.tiein) return `${it.n} (${it.tieinLabel})`;
-  const slot = slotOf(it.slot);
-  return `${slot ? slot.label : ''} #${it.n}`;
+  const slot = slotOf(it.sec || it.slot);
+  return it.alt ? `${slot ? slot.label : ''} #${it.legacy ?? it.n}` : `${slot ? slot.label : ''} #${it.n}`;
 }
 async function api(path, params = {}) {
   const u = new URL(WORKER_URL + path);
@@ -1128,7 +1137,7 @@ function renderHeader() {
 // Mosaïque
 // ---------------------------------------------------------------------
 function renderChips() {
-  const slots = (S.coll?.slots || []).filter(s => S.catalog.some(i => i.slot === s.key));
+  const slots = (S.coll?.slots || []).filter(s => S.catalog.some(i => i.sec === s.key));
   const hasTi = S.catalog.some(i => i.tiein);
   let h = '';
   if (S.filter.edition) h += `<button class="chip x" data-clear="edition">VF : ${esc(S.filter.edition.titre)} ✕</button>`;
@@ -1159,7 +1168,7 @@ function filtered() {
   return S.catalog.filter(it => {
     if (S.settings.hideNonLegacy && it.legacy == null && !it.tiein) return false;
     if (f.vol === '__ti' && !it.tiein) return false;
-    if (f.vol !== 'all' && f.vol !== '__ti' && it.slot !== f.vol) return false;
+    if (f.vol !== 'all' && f.vol !== '__ti' && it.sec !== f.vol) return false;
     if (f.edition && !Core.editionCovers(f.edition, it)) return false;
     if (f.range) { const p = itemPos(it); if (p == null || p < f.range.a || p > f.range.b) return false; }
     if (arc) { const p = itemPos(it); if (p == null || p < arc.s || p > arc.e) return false; }
@@ -1220,7 +1229,7 @@ function renderMosaic() {
   const eras = S.arcs.filter(a => a.kind === 'ere');
   let html = '', lastSlot = null, lastEra = null, lastTi = null;
   S.list.forEach((it, i) => {
-    if (showSec && it.slot && it.slot !== lastSlot) { lastSlot = it.slot; html += secHtml(it.slot); lastEra = null; }
+    if (showSec && it.sec && it.sec !== lastSlot) { lastSlot = it.sec; html += secHtml(it.sec); lastEra = null; }
     if (it.tiein !== lastTi) {
       if (lastTi) html += `<div class="tisep">fin de ${esc(S.tieins[lastTi]?.label || '')}</div>`;
       if (it.tiein) html += `<div class="tisep">📎 ${esc(it.tieinLabel)}</div>`;
@@ -1238,7 +1247,7 @@ function renderMosaic() {
 }
 function secHtml(key) {
   const slot = slotOf(key); if (!slot) return '';
-  const items = S.catalog.filter(i => i.slot === key && i.legacy != null);
+  const items = S.catalog.filter(i => i.sec === key && i.legacy != null);
   const r = items.filter(isRead).length, o = items.filter(isOwned).length, v = items.filter(vfOwned).length;
   const dates = items.map(i => i.cd).filter(Boolean).sort();
   const per = dates.length ? ` · ${fmtMonth(dates[0])} → ${fmtMonth(dates[dates.length - 1])}` : '';
@@ -1519,13 +1528,13 @@ function renderFrise() {
   const rowOf = new Map(rows.map((it, i) => [it.key, i]));
   const H = rows.length * ROW_H;
   // jump bar
-  $('#friseJump').innerHTML = (S.coll.slots || []).filter(s => rows.some(r => r.slot === s.key))
+  $('#friseJump').innerHTML = (S.coll.slots || []).filter(s => rows.some(r => r.sec === s.key))
     .map(s => `<button class="chip" data-jump="${esc(s.key)}" style="border-color:${S.slotColor[s.key]}">${esc(s.short || s.label)}</button>`).join('');
   let left = `<div class="fcol left"><div class="fhdr">Issue</div><div class="fbody" style="height:${H}px">`;
   rows.forEach((it, i) => {
     const nl = numLabel(it);
     if (it.tiein) left += `<div class="frow ti" data-r="${i}"><span class="st" style="background:${esc(it.tieinColor)}"></span><b>📎 ${esc(it.n)}</b></div>`;
-    else left += `<div class="frow" data-r="${i}"><span class="st" style="background:${S.slotColor[it.slot]}"></span><b>${esc(nl.main)}</b><span>${esc(nl.sub)}</span></div>`;
+    else left += `<div class="frow" data-r="${i}"><span class="st" style="background:${S.slotColor[it.sec]}"></span><b>${esc(nl.main)}</b><span>${esc(nl.sub)}</span></div>`;
   });
   left += '</div></div>';
   const cols = S.coll.columns || [];
@@ -1567,7 +1576,7 @@ function renderFrise() {
   };
   $('#friseJump').onclick = e => {
     const b = e.target.closest('[data-jump]'); if (!b) return;
-    const i = rows.findIndex(r => r.slot === b.dataset.jump); if (i >= 0) box.scrollTo({ top: i * ROW_H, behavior: 'smooth' });
+    const i = rows.findIndex(r => r.sec === b.dataset.jump); if (i >= 0) box.scrollTo({ top: i * ROW_H, behavior: 'smooth' });
   };
 }
 $('#btnAddEd2').onclick = () => openEdEditor(null);
@@ -1584,7 +1593,7 @@ function covBar(pred) {
 function renderLib() {
   if (!S.coll) return;
   const L = legacyItems();
-  const per = (S.coll.slots || []).map(s => ({ s, n: L.filter(i => i.slot === s.key).length })).filter(x => x.n);
+  const per = (S.coll.slots || []).map(s => ({ s, n: L.filter(i => i.sec === s.key).length })).filter(x => x.n);
   const vfo = L.filter(vfOwned).length, own = L.filter(isOwned).length, rd = L.filter(isRead).length;
   $('#covBox').innerHTML = L.length ? `
     <div class="covbar periods">${per.map(x => `<span style="width:${(x.n / L.length * 100).toFixed(3)}%;background:${S.slotColor[x.s.key]}" title="${esc(x.s.label)}">${esc(x.s.short || '')}</span>`).join('')}</div>
@@ -1664,7 +1673,7 @@ function renderStats() {
   $('#gaps').innerHTML = gapButtons(Core.computeGaps(S.catalog, isOwned));
   $('#gapsVf').innerHTML = gapButtons(Core.computeGaps(S.catalog, vfOwned));
   $('#perVol').innerHTML = (S.coll.slots || []).map(s => {
-    const it = L.filter(i => i.slot === s.key); if (!it.length) return '';
+    const it = L.filter(i => i.sec === s.key); if (!it.length) return '';
     const rr = it.filter(isRead).length, oo = it.filter(isOwned).length, vv = it.filter(vfOwned).length;
     return `<div class="vrow"><div><b>${esc(s.short || s.label)}</b><div style="font-size:11px;color:var(--mut)">${esc(Core.legacyRangeLabel(s))}</div></div>
       <div class="bars"><div class="bar"><i class="r" style="width:${pct(rr, it.length)}%"></i></div><div class="bar"><i class="o" style="width:${pct(oo, it.length)}%"></i></div><div class="bar"><i class="v" style="width:${pct(vv, it.length)}%"></i></div></div>
