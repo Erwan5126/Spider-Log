@@ -882,7 +882,7 @@ async function api(path, params = {}) {
   Object.entries(params).forEach(([k, v]) => u.searchParams.set(k, v));
   const r = await fetch(u);
   const j = await r.json().catch(() => ({}));
-  if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status));
+  if (!r.ok || (j.error && j.error !== 'OK')) throw new Error(j.error || ('HTTP ' + r.status));
   return j;
 }
 const uRef = (...p) => doc(db, 'users', S.user.uid, ...p);
@@ -1796,10 +1796,12 @@ async function importAll(logEl, btn) {
   if (btn) btn.disabled = true;
   try {
     const slots = S.coll.slots || [];
+    let ko = 0;
     for (let i = 0; i < slots.length; i++) {
-      try { await importSlot(slots[i], log, { fresh: i === slots.length - 1 }); } catch (e) { log(`  ✗ ${slots[i].label} : ${e.message}`); }
+      try { if (!(await importSlot(slots[i], log, { fresh: i === slots.length - 1 }))) ko++; } catch (e) { ko++; log(`  ✗ ${slots[i].label} : ${e.message}`); }
     }
-    log('Terminé.'); toast('Bibliothèque à jour');
+    log(ko ? `Terminé avec ${ko} volume(s) en échec.` : 'Terminé.');
+    toast(ko ? `${ko} volume(s) non importé(s) — voir le journal` : 'Bibliothèque à jour');
   } finally { if (btn) btn.disabled = false; }
 }
 $('#btnImportAll2').onclick = e => importAll($('#importLog'), e.currentTarget);
